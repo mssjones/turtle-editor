@@ -54,4 +54,4 @@ tested.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) © 2026 Mariëlle Ernst
