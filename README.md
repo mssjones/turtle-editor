@@ -49,8 +49,8 @@ marked.
 
 ## Tested on
 
-Python 3.11 on Linux. Other systems and versions have not been tested
-systematically.
+Linux with Python 3.11, and Windows. Other systems and versions have not been
+tested.
 
 ## License
 
