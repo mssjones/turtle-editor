@@ -35,10 +35,22 @@ work in a plain SSH session.
 | Clear | | Wipes the drawing and the messages |
 | Open | Ctrl+O (Cmd+O on a Mac) | Opens a `.py` file |
 | Save | Ctrl+S (Cmd+S on a Mac) | Saves your code as a `.py` file |
+| Save SVG | | Saves the drawing as an SVG for a pen plotter |
 
 Your code is ordinary turtle code, so a program written here also runs on its
 own, and the other way around. Errors appear under your code, with the line
 marked.
+
+## Save a drawing for a pen plotter
+
+Save SVG writes what is on the canvas to an A4 landscape page, scaled to fit
+within a 15 mm margin, with one SVG unit per millimeter. Everything from pen down
+to pen up becomes one `<path>`, so the plotter lifts its pen only where your
+turtle does.
+
+A plotter draws lines with one pen, so colors and pen sizes are not saved. Dots,
+stamps, fills and text are left out too, and the editor tells you when that
+happens. A line the turtle walks twice is plotted twice.
 
 ## Limits
 

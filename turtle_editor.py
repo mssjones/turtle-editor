@@ -5,9 +5,12 @@ It only needs Python with tkinter. Your code is ordinary turtle code, so a
 program written here also runs on its own, and the other way around.
 
 Keys: F5 runs the code, Ctrl+O opens a file, Ctrl+S saves it (Cmd on a Mac).
+Save SVG writes the drawing as an A4 page of pen strokes for a pen plotter.
 """
 
 import contextlib
+import math
+import os
 import tkinter as tk
 import traceback
 import turtle
@@ -15,8 +18,12 @@ from tkinter import filedialog, ttk
 
 FILENAME = "<editor>"
 FILETYPES = [("Python files", "*.py"), ("All files", "*.*")]
+SVG_FILETYPES = [("SVG files", "*.svg"), ("All files", "*.*")]
 CANVAS_WIDTH = 2000
 CANVAS_HEIGHT = 1600
+PAGE_WIDTH = 297  # millimeters: A4 landscape
+PAGE_HEIGHT = 210
+PAGE_MARGIN = 15
 STARTER_CODE = """\
 import turtle
 
@@ -32,6 +39,38 @@ turtle.done()
 
 def do_nothing(*args, **kwargs):
     """Stands in for the screen calls that would fight with the editor."""
+
+
+def strokes_to_svg(strokes):
+    """Scale strokes to fit the page. Returns the SVG, its line length in mm and the scale."""
+    points = [point for stroke in strokes for point in stroke]
+    left = min(x for x, y in points)
+    right = max(x for x, y in points)
+    top = min(y for x, y in points)
+    bottom = max(y for x, y in points)
+    scale = min(
+        (PAGE_WIDTH - 2 * PAGE_MARGIN) / (right - left or 1),
+        (PAGE_HEIGHT - 2 * PAGE_MARGIN) / (bottom - top or 1),
+    )
+    offset_x = (PAGE_WIDTH - scale * (right - left)) / 2 - scale * left
+    offset_y = (PAGE_HEIGHT - scale * (bottom - top)) / 2 - scale * top
+
+    paths = []
+    length = 0.0
+    for stroke in strokes:
+        page = [(offset_x + scale * x, offset_y + scale * y) for x, y in stroke]
+        length += sum(math.dist(a, b) for a, b in zip(page, page[1:]))
+        d = "M" + " L".join(f"{x:.2f} {y:.2f}" for x, y in page)
+        paths.append(f'  <path d="{d}"/>')
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{PAGE_WIDTH}mm" '
+        f'height="{PAGE_HEIGHT}mm" viewBox="0 0 {PAGE_WIDTH} {PAGE_HEIGHT}" '
+        'fill="none" stroke="black" stroke-width="0.4" '
+        'stroke-linecap="round" stroke-linejoin="round">\n'
+        + "\n".join(paths)
+        + "\n</svg>\n"
+    )
+    return svg, length, scale
 
 
 class TurtleEditor:
@@ -64,13 +103,16 @@ class TurtleEditor:
         self.clear_button = ttk.Button(buttons, text="Clear", command=self.clear)
         self.open_button = ttk.Button(buttons, text="Open", command=self.open_file)
         self.save_button = ttk.Button(buttons, text="Save", command=self.save_file)
+        self.svg_button = ttk.Button(buttons, text="Save SVG", command=self.save_svg)
         for button in (
             self.run_button,
             self.stop_button,
             self.clear_button,
             self.open_button,
             self.save_button,
+            self.svg_button,
         ):
+            button.configure(width=0)  # as wide as its text, so the row fits
             button.pack(side="left", padx=2, pady=4)
         self.position = ttk.Label(buttons)
         self.position.pack(side="right", padx=6)
@@ -78,7 +120,13 @@ class TurtleEditor:
         code_frame = ttk.Frame(parent)
         code_frame.pack(fill="both", expand=True)
         self.code = tk.Text(
-            code_frame, font=("Courier", 12), undo=True, wrap="none", width=40
+            code_frame,
+            font=("Courier", 12),
+            undo=True,
+            wrap="none",
+            width=40,
+            padx=8,
+            pady=6,
         )
         scroll = ttk.Scrollbar(code_frame, command=self.code.yview)
         self.code["yscrollcommand"] = scroll.set
@@ -89,7 +137,13 @@ class TurtleEditor:
         self.code.edit_reset()
 
         self.output = tk.Text(
-            parent, font=("Courier", 10), height=7, state="disabled", wrap="word"
+            parent,
+            font=("Courier", 10),
+            height=7,
+            state="disabled",
+            wrap="word",
+            padx=8,
+            pady=6,
         )
         self.output.pack(fill="x")
         self.output.tag_configure("error", foreground="#b00000")
@@ -191,6 +245,7 @@ class TurtleEditor:
             self.clear_button,
             self.open_button,
             self.save_button,
+            self.svg_button,
         ):
             button["state"] = idle
         self.stop_button["state"] = "normal" if running else "disabled"
@@ -266,6 +321,63 @@ class TurtleEditor:
             with open(name, "w", encoding="utf-8") as file:
                 file.write(self.code.get("1.0", "end-1c"))
             self.root.title(f"Turtle Editor - {name}")
+
+    def drawing_on_screen(self):
+        """Return the pen strokes on the canvas, and what a pen cannot draw."""
+        self.screen.update()  # after tracer(0), the last lines may still be waiting
+        strokes = []
+        skipped = {"stamp": 0, "dot": 0, "fill": 0, "text": 0}
+        for pen in self.screen.turtles():
+            skipped["stamp"] += len(pen.stampItems)
+            stroke = None
+            for item in pen.items:
+                kind = self.canvas.type(item)
+                if kind == "text":
+                    skipped["text"] += 1
+                elif not self.canvas.itemcget(item, "fill"):
+                    continue  # an empty item, waiting for a line or a fill
+                elif kind == "polygon":
+                    skipped["fill"] += 1
+                elif kind == "line":
+                    coords = self.canvas.coords(item)
+                    points = list(zip(coords[::2], coords[1::2]))
+                    if len(set(points)) == 1:  # dot() is a line without length
+                        skipped["dot"] += 1
+                    elif stroke and math.dist(stroke[-1], points[0]) < 0.01:
+                        # The turtle module cuts long lines into pieces. On paper
+                        # they are one stroke, or the pen would keep lifting.
+                        stroke.extend(points[1:])
+                    else:
+                        stroke = points
+                        strokes.append(stroke)
+        return strokes, skipped
+
+    def save_svg(self):
+        if self.running:
+            return
+        strokes, skipped = self.drawing_on_screen()
+        if not strokes:
+            self.write("No lines to save yet. Run a drawing first.\n")
+            return
+        name = filedialog.asksaveasfilename(
+            defaultextension=".svg", filetypes=SVG_FILETYPES
+        )
+        if not name:
+            return
+        svg, length, scale = strokes_to_svg(strokes)
+        try:
+            with open(name, "w", encoding="utf-8") as file:
+                file.write(svg)
+        except OSError as error:
+            self.write(f"Could not save: {error}\n", "error")
+            return
+        self.write(
+            f"{os.path.basename(name)}: {len(strokes)} stroke(s), "
+            f"{length / 1000:.1f} m of line, 1 step = {scale:.2f} mm\n"
+        )
+        left_out = [f"{count} {what}(s)" for what, count in skipped.items() if count]
+        if left_out:
+            self.write(f"Not in the SVG: {', '.join(left_out)}.\n", "error")
 
 
 def main():
