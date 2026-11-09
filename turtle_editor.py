@@ -14,7 +14,7 @@ import os
 import tkinter as tk
 import traceback
 import turtle
-from tkinter import filedialog, ttk
+from tkinter import filedialog, font, ttk
 
 FILENAME = "<editor>"
 FILETYPES = [("Python files", "*.py"), ("All files", "*.*")]
@@ -24,6 +24,7 @@ CANVAS_HEIGHT = 1600
 PAGE_WIDTH = 297  # millimeters: A4 landscape
 PAGE_HEIGHT = 210
 PAGE_MARGIN = 15
+CODE_FONT = ("Courier", 12)
 STARTER_CODE = """\
 import turtle
 
@@ -78,6 +79,7 @@ class TurtleEditor:
         self.root = root
         self.running = False
         self.closing = False
+        self.numbers_pending = False
         root.title("Turtle Editor")
         root.geometry("1200x720")
         root.protocol("WM_DELETE_WINDOW", self.close)
@@ -121,7 +123,7 @@ class TurtleEditor:
         code_frame.pack(fill="both", expand=True)
         self.code = tk.Text(
             code_frame,
-            font=("Courier", 12),
+            font=CODE_FONT,
             undo=True,
             wrap="none",
             width=40,
@@ -129,12 +131,18 @@ class TurtleEditor:
             pady=6,
         )
         scroll = ttk.Scrollbar(code_frame, command=self.code.yview)
-        self.code["yscrollcommand"] = scroll.set
+        self.scroll = scroll
+        self.code["yscrollcommand"] = self.code_scrolled
+        self.numbers = tk.Canvas(
+            code_frame, width=0, highlightthickness=0, background="#f0f0f0"
+        )
         scroll.pack(side="right", fill="y")
+        self.numbers.pack(side="left", fill="y")
         self.code.pack(side="left", fill="both", expand=True)
         self.code.tag_configure("error", background="#ffd6d6")
         self.code.insert("1.0", STARTER_CODE)
         self.code.edit_reset()
+        self.code.edit_modified(False)  # or <<Modified>> never fires for edits
 
         self.output = tk.Text(
             parent,
@@ -186,6 +194,8 @@ class TurtleEditor:
         self.code.bind("<Return>", self.insert_newline)
         self.code.bind("<KeyRelease>", self.update_position)
         self.code.bind("<ButtonRelease>", self.update_position)
+        self.code.bind("<<Modified>>", self.code_changed)
+        self.code.bind("<Configure>", self.schedule_line_numbers)
 
     def open_shortcut(self, event):
         self.open_file()
@@ -209,6 +219,47 @@ class TurtleEditor:
         self.code.see("insert")
         self.update_position()
         return "break"
+
+    def code_scrolled(self, first, last):
+        self.scroll.set(first, last)
+        self.schedule_line_numbers()
+
+    def code_changed(self, event=None):
+        self.code.edit_modified(False)  # so the next change fires the event again
+        self.schedule_line_numbers()
+
+    def schedule_line_numbers(self, event=None):
+        """Redraw once the text has its new layout, not halfway through."""
+        if not self.numbers_pending:
+            self.numbers_pending = True
+            self.root.after_idle(self.draw_line_numbers)
+
+    def draw_line_numbers(self):
+        """Write the number of each visible line at the height of that line."""
+        self.numbers_pending = False
+        last = int(self.code.index("end-1c").split(".")[0])
+        digits = max(2, len(str(last)))
+        width = font.Font(font=CODE_FONT).measure("0" * digits) + 12
+        if int(self.numbers["width"]) != width:
+            self.numbers["width"] = width
+        self.numbers.delete("all")
+        index = self.code.index("@0,0")
+        while True:
+            info = self.code.dlineinfo(index)
+            if info is None:
+                break
+            self.numbers.create_text(
+                width - 6,
+                info[1],
+                anchor="ne",
+                text=index.split(".")[0],
+                font=CODE_FONT,
+                fill="#888888",
+            )
+            following = self.code.index(f"{index} +1 line")
+            if following == index:
+                break
+            index = following
 
     def update_position(self, event=None):
         line = self.code.index("insert").split(".")[0]
